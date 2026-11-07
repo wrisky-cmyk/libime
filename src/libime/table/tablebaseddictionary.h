@@ -42,6 +42,15 @@ enum class PhraseFlag {
 using TableMatchCallback = std::function<bool(
     std::string_view, std::string_view, uint32_t, PhraseFlag)>;
 
+/**
+ * Filter to skip the matched word before it is returned by the dictionary
+ * matching. The input of the filter is the word in UTF-8. Return false to
+ * skip the word.
+ *
+ * @since 1.1.18
+ */
+using TableWordFilter = std::function<bool(std::string_view)>;
+
 enum class TableFormat { Text, Binary };
 enum class TableMatchMode { Exact, Prefix };
 
@@ -105,6 +114,17 @@ public:
 
     void setTableOptions(TableOptions option);
     const TableOptions &tableOptions() const;
+
+    /**
+     * Set a word filter to filter out the matched word. The filter will be
+     * applied to all the word matching, including the candidates and
+     * hasMatchingWords, but not reverseLookup and wordExists.
+     *
+     * Pass an empty filter to remove the existing filter.
+     *
+     * @since 1.1.18
+     */
+    void setWordFilter(TableWordFilter filter);
 
     bool matchWords(std::string_view code, TableMatchMode mode,
                     const TableMatchCallback &callback) const;

@@ -54,6 +54,7 @@ public:
     DATrie<uint32_t> promptTrie_; // lookup for prompt;
     AutoPhraseDict autoPhraseDict_{TABLE_AUTOPHRASE_SIZE};
     TableOptions options_;
+    TableWordFilter wordFilter_;
     std::optional<std::regex> autoSelectRegex_;
     std::optional<std::regex> noMatchAutoSelectRegex_;
 

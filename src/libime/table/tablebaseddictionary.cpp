@@ -451,18 +451,30 @@ bool TableBasedDictionaryPrivate::matchWordsInternal(
     const TableMatchCallback &callback) const {
     auto t0 = std::chrono::high_resolution_clock::now();
 
+    TableMatchCallback filteredCallback = callback;
+    if (wordFilter_) {
+        filteredCallback =
+            [this, &callback](std::string_view code, std::string_view word,
+                              uint32_t index, PhraseFlag flag) {
+                if (!wordFilter_(word)) {
+                    return true;
+                }
+                return callback(code, word, index, flag);
+            };
+    }
+
     // Match phrase trie.
     if (!matchTrie(code, mode, PhraseFlag::None,
-                   [&callback, this](std::string_view code,
-                                     std::string_view word, uint32_t index,
-                                     PhraseFlag flag) {
+                   [this, &filteredCallback](std::string_view code,
+                                             std::string_view word,
+                                             uint32_t index, PhraseFlag flag) {
                        if (!deletionTrie_.empty()) {
                            auto entry = generateTableEntry(code, word);
                            if (deletionTrie_.hasExactMatch(entry)) {
                                return true;
                            }
                        }
-                       return callback(code, word, index, flag);
+                       return filteredCallback(code, word, index, flag);
                    })) {
         return false;
     }
@@ -481,7 +493,8 @@ bool TableBasedDictionaryPrivate::matchWordsInternal(
             codeLength >= options_.noMatchAutoSelectLength()) {
             pinyinMode = TableMatchMode::Prefix;
         }
-        if (!matchTrie(pinyinCode, pinyinMode, PhraseFlag::Pinyin, callback)) {
+        if (!matchTrie(pinyinCode, pinyinMode, PhraseFlag::Pinyin,
+                       filteredCallback)) {
             return false;
         }
     }
@@ -489,13 +502,13 @@ bool TableBasedDictionaryPrivate::matchWordsInternal(
     LIBIME_TABLE_DEBUG() << "Match pinyin: " << millisecondsTill(t0);
 
     // Match user phrase
-    if (!matchTrie(code, mode, PhraseFlag::User, callback)) {
+    if (!matchTrie(code, mode, PhraseFlag::User, filteredCallback)) {
         return false;
     }
 
     LIBIME_TABLE_DEBUG() << "Match user: " << millisecondsTill(t0);
-    auto matchAutoPhrase = [mode, code, &callback](std::string_view entry,
-                                                   int32_t) {
+    auto matchAutoPhrase = [mode, code, &filteredCallback](std::string_view entry,
+                                                           int32_t) {
         auto sep = entry.find(keyValueSeparator, code.size());
         if (sep == std::string::npos) {
             return true;
@@ -506,8 +519,8 @@ bool TableBasedDictionaryPrivate::matchWordsInternal(
         if (mode == TableMatchMode::Prefix ||
             (mode == TableMatchMode::Exact &&
              fcitx::utf8::length(matchedCode) == fcitx::utf8::length(code))) {
-            return callback(matchedCode, view.substr(sep + 1), 0,
-                            PhraseFlag::Auto);
+            return filteredCallback(matchedCode, view.substr(sep + 1), 0,
+                                    PhraseFlag::Auto);
         }
         return true;
     };
@@ -1488,6 +1501,11 @@ bool TableBasedDictionary::matchWords(
     return d->matchWordsInternal(code, mode, false, callback);
 }
 
+void TableBasedDictionary::setWordFilter(TableWordFilter filter) {
+    FCITX_D();
+    d->wordFilter_ = std::move(filter);
+}
+
 bool TableBasedDictionary::hasMatchingWords(std::string_view code,
                                             std::string_view next) const {
     std::string str{code};
@@ -1681,6 +1699,10 @@ void TableBasedDictionary::matchPrefixImpl(
                         std::string_view ref(entry);
                         auto code = ref.substr(0, sep);
                         auto word = ref.substr(sep + 1);
+
+                        if (d->wordFilter_ && !d->wordFilter_(word)) {
+                            return true;
+                        }
 
                         WordNode wordNode(word, InvalidWordIndex);
                         callback(path, wordNode, 0,

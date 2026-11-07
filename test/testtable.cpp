@@ -416,6 +416,90 @@ void testOneMatchingWord() {
     FCITX_ASSERT(!table.hasOneMatchingWord("nnkd"));
 }
 
+void testWordFilter() {
+
+    std::string test = "KeyCode=abcdefghijklmnopqrstuvwxy\n"
+                       "Length=4\n"
+                       "Pinyin=@\n"
+                       "[Data]\n"
+                       "xycq 统\n"
+                       "yfh 计\n"
+                       "qpwk 镕\n";
+    std::stringstream ss(test);
+    libime::TableBasedDictionary table;
+    table.load(ss, libime::TableFormat::Text);
+
+    testMatch(table, "xycq", {"统"}, false);
+    testMatch(table, "qpwk", {"镕"}, false);
+    FCITX_ASSERT(table.hasMatchingWords("qpwk"));
+
+    table.setWordFilter(
+        [](std::string_view word) { return word != "镕"; });
+    testMatch(table, "xycq", {"统"}, false);
+    testMatch(table, "qpwk", {}, false);
+    FCITX_ASSERT(!table.hasMatchingWords("qpwk"));
+    FCITX_ASSERT(table.hasMatchingWords("xyc"));
+    // Filter does not affect reverseLookup.
+    FCITX_ASSERT(table.reverseLookup("镕") == "qpwk");
+    // Filter does not affect wordExists.
+    FCITX_ASSERT(table.wordExists("qpwk", "镕") == PhraseFlag::None);
+
+    // Unset the filter.
+    table.setWordFilter({});
+    testMatch(table, "qpwk", {"镕"}, false);
+    FCITX_ASSERT(table.hasMatchingWords("qpwk"));
+}
+
+void testWordFilterConstructPhrase() {
+
+    std::string test = "KeyCode=abcdefghijklmnopqrstuvwxy\n"
+                       "Length=4\n"
+                       "[Rule]\n"
+                       "e2=p11+p12+p21+p22\n"
+                       "[Data]\n"
+                       "ab 镕\n"
+                       "cd 统\n";
+    std::stringstream ss(test);
+    libime::TableBasedDictionary table;
+    table.load(ss, libime::TableFormat::Text);
+
+    // Enable the rule so that the code is split into per-char segments and
+    // the construct phrase path (singleCharLookupTrie_) is used.
+    libime::TableOptions options;
+    options.setAutoRuleSet({"e2"});
+    table.setTableOptions(options);
+
+    // Collect the words from the lattice matching, which includes the
+    // single char nodes from singleCharLookupTrie_.
+    auto collect = [&table](const char *code) {
+        std::set<std::string> words;
+        auto graph = graphForCode(code, table);
+        table.matchPrefix(
+            graph,
+            [&words](const SegmentGraphPath &, WordNode &word, float,
+                     std::unique_ptr<LatticeNodeData>) {
+                words.insert(std::string{word.word()});
+            });
+        return words;
+    };
+
+    auto unfiltered = collect("abcd");
+    FCITX_ASSERT(unfiltered.count("镕"));
+    FCITX_ASSERT(unfiltered.count("统"));
+
+    table.setWordFilter([](std::string_view word) { return word != "镕"; });
+    auto filtered = collect("abcd");
+    FCITX_ASSERT(!filtered.count("镕"));
+    // The constructed phrase with the filtered-out char must not be
+    // generated, otherwise it may still be auto selected.
+    FCITX_ASSERT(!filtered.count("镕统"));
+    FCITX_ASSERT(filtered.count("统"));
+
+    table.setWordFilter({});
+    auto restored = collect("abcd");
+    FCITX_ASSERT(restored == unfiltered);
+}
+
 int main() {
     testRule();
     testWubi();
@@ -426,6 +510,8 @@ int main() {
     testEscape();
     testOneMatchingWord();
     testExtraDict();
+    testWordFilter();
+    testWordFilterConstructPhrase();
 
     return 0;
 }
